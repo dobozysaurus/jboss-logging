@@ -75,7 +75,6 @@ public class PeriodicRotatingFileHandlerTests extends AbstractHandlerTest {
         handler.close();
         handler = null;
         Files.list(BASE_LOG_DIR.toPath()).forEach(p -> {
-            System.out.println("deleting file " + p);
             try {
                 File f = p.toFile();
                 if (!f.isDirectory()) {
@@ -179,7 +178,7 @@ public class PeriodicRotatingFileHandlerTests extends AbstractHandlerTest {
 
         createLogRecords(10, cal, currentDate, sdf);
 
-        handler.setPruneSize(50L);
+        handler.setPruneSize("50");
         ExtLogRecord record = createLogRecord(Level.INFO, "Date: %s", currentDate);
         record.setMillis(cal.getTimeInMillis());
         handler.publish(record);
@@ -193,6 +192,66 @@ public class PeriodicRotatingFileHandlerTests extends AbstractHandlerTest {
 
     }
 
+    @Test
+    public void testPrunePeriods() throws Exception {
+
+        final SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd");
+        Calendar cal = Calendar.getInstance(TimeZone.getDefault());
+
+        String currentDate = sdf.format(cal.getTime());
+        handler.setSuffix(".YYYY-MM-dd");
+
+        createLogRecords(10, cal, currentDate, sdf);
+
+        handler.setPruneSize("5p");
+        ExtLogRecord record = createLogRecord(Level.INFO, "Date: %s", currentDate);
+        record.setMillis(cal.getTimeInMillis());
+        handler.publish(record);
+
+        cal.add(Calendar.DAY_OF_MONTH, -1);
+
+        List<Path> files = Files
+            .list(BASE_LOG_DIR.toPath())
+            .sorted(Comparator.comparingLong(p -> ((Path) p).toFile().lastModified()).reversed())
+            .collect(Collectors.toList());
+        files.forEach(System.out::println);
+        Assert.assertEquals(6, files.size());
+        Assert.assertEquals("periodic-rotating-file-handler.log", files.get(0).getFileName().toString());
+        for (int i = 0; i < 5; i++) {
+            Assert.assertEquals("periodic-rotating-file-handler.log." + sdf.format(cal.getTime()), files.get(i + 1).getFileName().toString());
+            cal.add(Calendar.DAY_OF_MONTH, -1);
+        }
+
+    }
+
+    @Test
+    public void testPruneInvalidSize() throws Exception {
+        final SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd");
+        Calendar cal = Calendar.getInstance(TimeZone.getDefault());
+        String currentDate = sdf.format(cal.getTime());
+        handler.setSuffix(".YYYY-MM-dd");
+        createLogRecords(10, cal, currentDate, sdf);
+
+        handler.setPruneSize("-50");
+        ExtLogRecord record = createLogRecord(Level.INFO, "Date: %s", currentDate);
+        record.setMillis(cal.getTimeInMillis());
+        handler.publish(record);
+    }
+    @Test
+    public void testPruneInvalidPeriods() throws Exception {
+        final SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd");
+        Calendar cal = Calendar.getInstance(TimeZone.getDefault());
+        String currentDate = sdf.format(cal.getTime());
+        handler.setSuffix(".YYYY-MM-dd");
+        createLogRecords(10, cal, currentDate, sdf);
+
+        handler.setPruneSize("-5p");
+        ExtLogRecord record = createLogRecord(Level.INFO, "Date: %s", currentDate);
+        record.setMillis(cal.getTimeInMillis());
+        handler.publish(record);
+    }
+
+
     @Test(timeout = 5000L)
     public void testPruneLarge() throws Exception {
 
@@ -204,7 +263,7 @@ public class PeriodicRotatingFileHandlerTests extends AbstractHandlerTest {
 
         createLogRecords(100, cal, currentDate, sdf);
 
-        handler.setPruneSize(100L);
+        handler.setPruneSize("100");
         ExtLogRecord record = createLogRecord(Level.INFO, "Date: %s", currentDate);
         record.setMillis(cal.getTimeInMillis());
         handler.publish(record);
@@ -231,7 +290,7 @@ public class PeriodicRotatingFileHandlerTests extends AbstractHandlerTest {
 
         createLogRecords(10, cal, currentDate, sdf);
 
-        handler.setPruneSize(50L);
+        handler.setPruneSize("50");
         ExtLogRecord record = createLogRecord(Level.INFO, "Date: %s", currentDate);
         record.setMillis(cal.getTimeInMillis());
         handler.publish(record);
@@ -264,7 +323,7 @@ public class PeriodicRotatingFileHandlerTests extends AbstractHandlerTest {
 
         createLogRecords(10, cal, currentDate, sdf);
 
-        handler.setPruneSize(50L);
+        handler.setPruneSize("50");
         ExtLogRecord record = createLogRecord(Level.INFO, "Date: %s", currentDate);
         record.setMillis(cal.getTimeInMillis());
         handler.publish(record);
@@ -299,7 +358,7 @@ public class PeriodicRotatingFileHandlerTests extends AbstractHandlerTest {
 
         createLogRecords(10, cal, currentDate, sdf);
 
-        handler.setPruneSize(50L);
+        handler.setPruneSize("50");
         ExtLogRecord record = createLogRecord(Level.INFO, "Date: %s", currentDate);
         record.setMillis(cal.getTimeInMillis());
         handler.publish(record);
@@ -335,7 +394,7 @@ public class PeriodicRotatingFileHandlerTests extends AbstractHandlerTest {
 
         createLogRecords(10, cal, currentDate, sdf);
 
-        handler.setPruneSize(50L);
+        handler.setPruneSize("50");
         ExtLogRecord record = createLogRecord(Level.INFO, "Date: %s", currentDate);
         record.setMillis(cal.getTimeInMillis());
         handler.publish(record);
@@ -386,7 +445,7 @@ public class PeriodicRotatingFileHandlerTests extends AbstractHandlerTest {
             currentDate = sdf.format(cal.getTime());
         }
 
-        handler.setPruneSize(400L);
+        handler.setPruneSize("400");
         ExtLogRecord record = createLogRecord(Level.INFO, "Date: %s", currentDate);
         record.setMillis(cal.getTimeInMillis());
         handler.publish(record);

@@ -32,6 +32,7 @@ import java.util.*;
 import java.util.logging.ErrorManager;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 /**
  * A file handler which rotates the log at a preset time interval.  The interval is determined by the content of the
@@ -45,7 +46,12 @@ public class PeriodicRotatingFileHandler extends FileHandler {
     private long nextRollover = Long.MAX_VALUE;
     private TimeZone timeZone = TimeZone.getDefault();
     private SuffixRotator suffixRotator = SuffixRotator.EMPTY;
-    private long pruneSize = Long.MIN_VALUE;
+
+    private enum PruningStrategy { NONE, PERIODS, SIZE };
+
+    private String pruneSize;
+    private long pruneSizeResolved = 0L;
+    private PruningStrategy pruningStrategy = PruningStrategy.NONE;
 
 
     /**
@@ -203,7 +209,7 @@ public class PeriodicRotatingFileHandler extends FileHandler {
             // start new file
             setFile(file);
 
-            if (pruneSize > 0) {
+            if (pruneSizeResolved > 0) {
                 pruneFiles(file);
             }
 
@@ -215,42 +221,57 @@ public class PeriodicRotatingFileHandler extends FileHandler {
 
     private void pruneFiles(File baseFile) throws IOException {
 
-        String baseName = baseFile.getName();
-        Path parent = baseFile.toPath().getParent();
-        String suffixPattern = this.getSuffixRotator().getDatePattern();
+        synchronized (outputLock) {
 
-        Pattern namePattern = Pattern.compile("^" + Pattern.quote(baseName) + ".*$");
+            String baseName = baseFile.getName();
+            Path parent = baseFile.toPath().getParent();
+            String suffixPattern = this.getSuffixRotator().getDatePattern();
 
-        /*
-         * Pruneable files are files in the current file's directory that are:
-         *
-         * a) regular (not symlinks, dirs, or hidden)
-         * b) not the current log
-         * c) match the current file syntax
-         * d) at a max depth of 1 (files in nested dirs aren't considered)
-         */
-        List<File> pruneables = Files
-            .find(parent, 1, (p, a) ->
-                a.isRegularFile() &&
-                    !p.getFileName().toString().equals(baseName) &&
-                    namePattern.matcher(p.getFileName().toString()).matches()
-            )
-            .map(Path::toFile)
-            .filter(File::canWrite)
-            .collect(Collectors.toList());
-        long total = pruneables.stream().mapToLong(File::length).sum();
-        if (total > pruneSize) {
-            // sort files in ascending chronological order
-            pruneables.sort(Comparator.comparingLong(File::lastModified));
+            Pattern namePattern = Pattern.compile("^" + Pattern.quote(baseName) + ".*$");
 
-            for (int i = 0, size = pruneables.size(); i < size && total > pruneSize; i++) {
-                long fsize = pruneables.get(i).length();
-                try {
-                    Files.deleteIfExists(pruneables.get(i).toPath());
-                } catch (IOException ex) {
-                    reportError("Unable to prune log file", ex, ErrorManager.GENERIC_FAILURE);
+            /*
+            * Pruneable files are files in the current file's directory that are:
+            *
+            * a) regular (not symlinks, dirs, or hidden)
+            * b) not the current log
+            * c) match the current file syntax
+            * d) at a max depth of 1 (files in nested dirs aren't considered)
+            */
+            List<File> pruneables = Files
+                .find(parent, 1, (p, a) ->
+                    a.isRegularFile() &&
+                        !p.getFileName().toString().equals(baseName) &&
+                        namePattern.matcher(p.getFileName().toString()).matches()
+                )
+                .map(Path::toFile)
+                .filter(File::canWrite)
+                .sorted(Comparator.comparingLong(File::lastModified))
+                .collect(Collectors.toList());
+
+            if (pruningStrategy == PruningStrategy.SIZE) {
+                long total = pruneables.stream().mapToLong(File::length).sum();
+                if (total > pruneSizeResolved) {
+                    for (int i = 0, size = pruneables.size(); i < size && total > pruneSizeResolved; i++) {
+                        long fsize = pruneables.get(i).length();
+                        try {
+                            Files.deleteIfExists(pruneables.get(i).toPath());
+                        } catch (IOException ex) {
+                            reportError("Unable to prune log file", ex, ErrorManager.GENERIC_FAILURE);
+                        }
+                        total -= fsize;
+                    }
                 }
-                total -= fsize;
+            } else if (pruningStrategy == PruningStrategy.PERIODS) {
+                int periods = Long.valueOf(pruneSizeResolved).intValue();
+                if (pruneables.size() > periods) {
+                    for (int i = 0; i < periods; i++) {
+                        try {
+                            Files.deleteIfExists(pruneables.get(i).toPath());
+                        } catch (IOException ex) {
+                            reportError("Unable to prune log file", ex, ErrorManager.GENERIC_FAILURE);
+                        }
+                    }
+                }
             }
         }
     }
@@ -345,12 +366,26 @@ public class PeriodicRotatingFileHandler extends FileHandler {
         this.timeZone = timeZone;
     }
 
-    public long getPruneSize() {
+    public String getPruneSize() {
         return pruneSize;
     }
 
-    public void setPruneSize(long pruneSize) {
+    public void setPruneSize(String pruneSize) {
         this.pruneSize = pruneSize;
+        try {
+          if (pruneSize.endsWith("p") || pruneSize.endsWith("P")) {
+              pruningStrategy = PruningStrategy.PERIODS;
+              pruneSizeResolved = Long.parseLong(pruneSize.substring(0, pruneSize.length() - 1));
+          } else {
+              pruningStrategy = PruningStrategy.SIZE;
+              pruneSizeResolved = Long.parseLong(pruneSize);
+          }
+        } catch (NumberFormatException e) {
+            reportError("Unable to parse prune size", e, ErrorManager.FORMAT_FAILURE);
+        }
+        if (pruneSizeResolved < 0) {
+            reportError("Prune size must be positive", null, ErrorManager.GENERIC_FAILURE);
+        }
     }
 
     private static <T extends Comparable<? super T>> T min(T a, T b) {
